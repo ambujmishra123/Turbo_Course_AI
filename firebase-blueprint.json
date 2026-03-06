@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "Course": {
+      "title": "Course",
+      "description": "A generated learning course",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The title of the course"
+        },
+        "description": {
+          "type": "string",
+          "description": "A brief description of the course"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Technology", "Business", "Arts & Design", "Science", "Health", "Lifestyle"],
+          "description": "The category the course belongs to"
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "videoUrl": { "type": "string" },
+              "videoSummary": { "type": "string" },
+              "completed": { "type": "boolean" }
+            }
+          }
+        },
+        "authorId": {
+          "type": "string",
+          "description": "The UID of the user who created the course"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "The name of the user who created the course"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the course was shared to the global library"
+        }
+      },
+      "required": ["title", "category", "topics", "authorId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/global_courses/{courseId}": {
+      "schema": "Course",
+      "description": "Publicly shared courses"
+    }
+  }
+}

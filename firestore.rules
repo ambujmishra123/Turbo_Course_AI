@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: global_courses
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required)
+    //   - description: string (optional)
+    //   - category: string (required, enum)
+    //   - topics: list of objects (required)
+    //   - authorId: string (required, matches auth.uid)
+    //   - authorName: string (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "ambujmishra.mishra@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidCourse(data) {
+      let categories = ["Technology", "Business", "Arts & Design", "Science", "Health", "Lifestyle"];
+      return data.keys().hasAll(['title', 'category', 'topics', 'authorId', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.category in categories &&
+             data.topics is list && data.topics.size() > 0 && data.topics.size() <= 50 &&
+             data.authorId == request.auth.uid &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    match /global_courses/{courseId} {
+      // Global Library is visible to everyone
+      allow read: if true;
+      
+      // Only authenticated users can share courses
+      allow create: if isAuthenticated() && isValidCourse(request.resource.data);
+      
+      // Only author or admin can delete
+      allow delete: if isOwner(resource.data.authorId) || isAdmin();
+      
+      // No updates for now to keep it simple and immutable
+      allow update: if false;
+    }
+  }
+}
