@@ -91,6 +91,31 @@ export async function generateCourseStructure(params: {
   });
 }
 
+export async function checkVideoAvailability(url: string): Promise<boolean> {
+  try {
+    const videoIdMatch = url.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+    if (!videoIdMatch) return false;
+    const videoId = videoIdMatch[1];
+    
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // YouTube returns a 120x90 placeholder for mqdefault.jpg if video is missing
+        if (img.width === 120 && img.height === 90) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      };
+      img.onerror = () => resolve(false);
+      // mqdefault is reliable for existence check
+      img.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
 export async function findVideoForTopic(topic: CourseTopic): Promise<{ url: string; title: string }> {
   return withRetry(async () => {
     const prompt = `Find a high-quality, CURRENTLY AVAILABLE, and educational YouTube video for the topic: "${topic.title}". 

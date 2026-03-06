@@ -35,6 +35,7 @@ import {
   findVideoForTopic, 
   summarizeVideo, 
   regenerateCourseStructure,
+  checkVideoAvailability,
   Course, 
   CourseTopic 
 } from './services/gemini';
@@ -87,6 +88,20 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [eta, setEta] = useState<number | null>(null);
+  const processingRef = React.useRef(false);
+
+  // Timer for ETA
+  React.useEffect(() => {
+    let timer: any;
+    if (isProcessing && eta !== null && eta > 0) {
+      timer = setInterval(() => {
+        setEta(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isProcessing, eta]);
 
   const requireAuth = (action: () => void) => {
     if (auth.currentUser) {
@@ -227,46 +242,92 @@ export default function App() {
   const startProcessing = () => {
     setCurrentTopicIndex(0);
     setStep('processing_topics');
+    if (course) {
+      // Estimate 15 seconds per topic
+      setEta(course.topics.length * 15);
+    }
   };
 
   const processTopic = async (index: number) => {
     if (!course) return;
     setLoading(true);
     setError(null);
+    setIsProcessing(true);
+    processingRef.current = true;
     
     try {
       const updatedTopics = [...course.topics];
       const topic = updatedTopics[index];
       
-      setStatus(`Finding video for "${topic.title}"...`);
-      const video = await findVideoForTopic(topic);
+      setStatus(`Searching for a working video for "${topic.title}"...`);
+      let video = await findVideoForTopic(topic);
       
-      if (video.url && video.url.includes('youtube.com/watch?v=')) {
+      // Pre-check video existence
+      let isValid = await checkVideoAvailability(video.url);
+      let attempts = 0;
+      
+      while (!isValid && attempts < 2 && processingRef.current) {
+        attempts++;
+        setStatus(`Video found was unavailable. Retrying search (Attempt ${attempts + 1})...`);
+        video = await findVideoForTopic(topic);
+        isValid = await checkVideoAvailability(video.url);
+      }
+
+      if (!processingRef.current) {
+        setLoading(false);
+        setIsProcessing(false);
+        return;
+      }
+      
+      if (isValid && video.url && video.url.includes('youtube.com/watch?v=')) {
         updatedTopics[index].videoUrl = video.url;
         updatedTopics[index].videoTitle = video.title;
         
         setStatus(`Summarizing video for "${topic.title}"...`);
-        updatedTopics[index].videoSummary = await summarizeVideo(video.url, topic.title);
+        const summary = await summarizeVideo(video.url, topic.title);
+        
+        if (!processingRef.current) {
+          setLoading(false);
+          setIsProcessing(false);
+          return;
+        }
+        
+        updatedTopics[index].videoSummary = summary;
       } else {
         // Handle case where no valid video is found
         updatedTopics[index].videoUrl = undefined;
-        updatedTopics[index].videoSummary = "Could not find a valid educational video for this topic. Please try searching manually.";
+        updatedTopics[index].videoSummary = "Could not find a valid educational video for this topic after multiple attempts. Please try searching manually or try another video.";
       }
       
       setCourse({ ...course, topics: updatedTopics });
     } catch (err: any) {
       console.error(err);
-      setError(`Failed to process topic "${course.topics[index].title}": ${err.message}`);
+      if (processingRef.current) {
+        setError(`Failed to process topic "${course.topics[index].title}": ${err.message}`);
+      }
     } finally {
       setLoading(false);
+      setIsProcessing(false);
+      processingRef.current = false;
     }
+  };
+
+  const stopProcessing = () => {
+    processingRef.current = false;
+    setIsProcessing(false);
+    setLoading(false);
+    setStatus('Stopped.');
+    setEta(null);
   };
 
   const handleNextTopic = () => {
     if (!course) return;
     if (currentTopicIndex + 1 < course.topics.length) {
+      const remaining = course.topics.length - (currentTopicIndex + 1);
+      setEta(remaining * 15); // Reset estimate for remaining topics
       setCurrentTopicIndex(currentTopicIndex + 1);
     } else {
+      setEta(null);
       setStep('course');
     }
   };
@@ -849,7 +910,15 @@ export default function App() {
                 <div className="mb-8">
                   <div className="flex justify-between text-sm font-bold mb-2">
                     <span className="text-zinc-400 uppercase tracking-widest">Overall Progress</span>
-                    <span className="text-emerald-600">{generationProgress}%</span>
+                    <div className="flex items-center gap-4">
+                      {eta !== null && eta > 0 && (
+                        <span className="text-zinc-400 font-medium flex items-center gap-1">
+                          <Clock size={14} />
+                          Est. {Math.floor(eta / 60)}m {eta % 60}s remaining
+                        </span>
+                      )}
+                      <span className="text-emerald-600">{generationProgress}%</span>
+                    </div>
                   </div>
                   <div className="h-3 bg-zinc-100 rounded-full overflow-hidden">
                     <motion.div 
@@ -917,9 +986,17 @@ export default function App() {
                             )}
 
                             {isCurrent && loading && (
-                              <div className="flex items-center gap-2 text-emerald-600 text-sm font-bold">
-                                <Loader2 size={16} className="animate-spin" />
-                                Processing...
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2 text-emerald-600 text-sm font-bold">
+                                  <Loader2 size={16} className="animate-spin" />
+                                  Processing...
+                                </div>
+                                <button 
+                                  onClick={stopProcessing}
+                                  className="text-red-500 hover:text-red-700 text-xs font-bold flex items-center gap-1 px-2 py-1 rounded border border-red-100 hover:bg-red-50 transition-all"
+                                >
+                                  <RefreshCw size={12} className="rotate-45" /> Stop
+                                </button>
                               </div>
                             )}
                           </div>
